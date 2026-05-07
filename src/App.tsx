@@ -35,6 +35,9 @@ interface Message {
   imageData?: string; // base64
 }
 
+type AspectRatio = "1:1" | "4:3" | "16:9";
+type ImageStyle = "None" | "Realistic" | "Cinematic" | "Anime" | "Oil Painting" | "Digital Art" | "Sketch";
+
 // --- Initialization ---
 
 const API_KEY = process.env.GEMINI_API_KEY;
@@ -58,6 +61,16 @@ If the user asks for image generation or editing, acknowledge it in Burmese and 
 const MessageBubble = ({ message }: { message: Message, key?: string }) => {
   const isBot = message.role === "bot";
   
+  const handleDownload = () => {
+    if (!message.imageData) return;
+    const link = document.createElement("a");
+    link.href = message.imageData;
+    link.download = `mgthant_ai_${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -79,20 +92,29 @@ const MessageBubble = ({ message }: { message: Message, key?: string }) => {
         </div>
         
         <div className={cn(
-          "px-4 py-2 rounded-2xl shadow-sm",
+          "px-4 py-2 rounded-2xl shadow-sm relative group/msg",
           isBot 
             ? "bg-white text-neutral-900 rounded-bl-none dark:bg-neutral-800 dark:text-neutral-100" 
             : "bg-brand text-white rounded-br-none"
         )}>
           {message.type === "image" && message.imageData ? (
-            <div className="space-y-2">
-              <img 
-                src={message.imageData} 
-                alt="Generated" 
-                className="max-w-full rounded-lg"
-                referrerPolicy="no-referrer"
-              />
-              {message.content && <p className="text-sm">{message.content}</p>}
+            <div className="space-y-2 relative">
+              <div className="relative group/img">
+                <img 
+                  src={message.imageData} 
+                  alt="Generated" 
+                  className="max-w-full rounded-lg shadow-sm"
+                  referrerPolicy="no-referrer"
+                />
+                <button 
+                  onClick={handleDownload}
+                  className="absolute top-2 right-2 p-2 bg-black/50 hover:bg-black/70 text-white rounded-full opacity-0 group-hover/img:opacity-100 transition-opacity backdrop-blur-sm"
+                  title="Download Image"
+                >
+                  <Download size={16} />
+                </button>
+              </div>
+              {message.content && <p className="text-sm font-medium">{message.content}</p>}
             </div>
           ) : (
             <p className="whitespace-pre-wrap break-words leading-relaxed text-[15px]">
@@ -112,20 +134,50 @@ const MessageBubble = ({ message }: { message: Message, key?: string }) => {
 };
 
 export default function App() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "initial",
-      role: "bot",
-      content: "မင်္ဂလာပါ! ကျွန်တော်က MG THANT AI ပါ။\nခင်မင်ရင်းနှီးစွာနဲ့ အကောင်းဆုံး ကူညီပေးသွားမှာပါ။ ကျွန်တော်က စာတွေရေးပေးနိုင်သလို၊ ပုံတွေလည်း ဖန်တီးပေးနိုင်ပါတယ်။\n\nဘာများ ကူညီပေးရမလဲခင်ဗျာ?",
-      type: "text",
-      timestamp: new Date()
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
+  const [imageStyle, setImageStyle] = useState<ImageStyle>("None");
+  const [showSettings, setShowSettings] = useState(false);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("mgthant_messages");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setMessages(parsed.map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.timestamp)
+        })));
+      } catch (e) {
+        console.error("Failed to load history", e);
+      }
+    } else {
+      setMessages([
+        {
+          id: "initial",
+          role: "bot",
+          content: "မင်္ဂလာပါ! ကျွန်တော်က MG THANT AI ပါ။\nခင်မင်ရင်းနှီးစွာနဲ့ အကောင်းဆုံး ကူညီပေးသွားမှာပါ။ ကျွန်တော်က စာတွေရေးပေးနိုင်သလို၊ ပုံတွေလည်း ဖန်တီးပေးနိုင်ပါတယ်။\n\nဘာများ ကူညီပေးရမလဲခင်ဗျာ?",
+          type: "text",
+          timestamp: new Date()
+        }
+      ]);
+    }
+  }, []);
+
+  // Save to localStorage whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      // Keep only last 30 messages to prevent quota/storage issues
+      localStorage.setItem("mgthant_messages", JSON.stringify(messages.slice(-30)));
+    }
+  }, [messages]);
 
   // Scroll to bottom on new message
   useEffect(() => {
@@ -153,13 +205,11 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // 1. Intent Detection (Simplified for speed)
-      // Check for image generation keywords if no image is uploaded
+      // 1. Intent Detection
       const isImageGenRequest = !selectedImage && (
         /draw|generate|create|photo|image|picture|painting|ပုံဆွဲ|ပုံဖန်တီး|ဓါတ်ပုံ|ပုံလေး|ဆွဲပေး/i.test(userText)
       );
 
-      // Check for edit request if image is uploaded
       const isEditRequest = selectedImage && /edit|ပြင်|ပြောင်း/i.test(userText);
 
       if (isEditRequest) {
@@ -169,7 +219,7 @@ export default function App() {
           contents: {
             parts: [
               { inlineData: { data: selectedImage.split(',')[1], mimeType: "image/png" } },
-              { text: userText || "edit this image" }
+              { text: `${userText || "edit this image"}. Maintain aspect ratio ${aspectRatio}.` }
             ]
           },
           config: {
@@ -203,18 +253,21 @@ export default function App() {
         }
       } else if (isImageGenRequest) {
         // Handle Image Generation
-        // First, get a clear English prompt from Gemini for the image model
         const promptRes = await ai.models.generateContent({
           model: MODEL_CHAT,
-          contents: `Create a brief English image generation prompt based on this Burmese request (reply ONLY with the prompt): ${userText}`
+          contents: `Create a brief English image generation prompt based on this Burmese request. 
+          Style preference: ${imageStyle}. 
+          Aspect Ratio: ${aspectRatio}.
+          Burmese request: ${userText}
+          (reply ONLY with the prompt)`
         });
         const englishPrompt = promptRes.text?.trim() || userText;
 
         const response = await ai.models.generateContent({
           model: MODEL_IMAGE,
-          contents: { parts: [{ text: englishPrompt }] },
+          contents: { parts: [{ text: `${englishPrompt}. Style: ${imageStyle}. Aspect ratio: ${aspectRatio}.` }] },
           config: {
-            systemInstruction: "You are an expert image generator. Generate the image based on the prompt provided."
+            systemInstruction: `You are an expert image generator. Generate the image in ${aspectRatio} aspect ratio and ${imageStyle} style.`
           }
         });
 
@@ -225,7 +278,7 @@ export default function App() {
             setMessages(prev => [...prev, {
               id: botMsgId,
               role: "bot",
-              content: "ပုံဖန်တီးပြီးပါပြီ။",
+              content: `ပုံဖန်တီးပြီးပါပြီ။ (Aspect: ${aspectRatio}, Style: ${imageStyle})`,
               type: "image",
               timestamp: new Date(),
               imageData: `data:image/png;base64,${part.inlineData.data}`
@@ -360,6 +413,58 @@ export default function App() {
       {/* Input Area */}
       <footer className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#0f0f0f] via-[#0f0f0f] to-transparent">
         <div className="max-w-4xl mx-auto">
+          <AnimatePresence>
+            {showSettings && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0, y: 10 }}
+                animate={{ opacity: 1, height: "auto", y: 0 }}
+                exit={{ opacity: 0, height: 0, y: 10 }}
+                className="mb-4 bg-[#1a1a1b] border border-neutral-800 rounded-2xl p-4 overflow-hidden shadow-2xl"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest block mb-3">Aspect Ratio</label>
+                    <div className="flex gap-2">
+                      {(["1:1", "4:3", "16:9"] as AspectRatio[]).map((ratio) => (
+                        <button
+                          key={ratio}
+                          onClick={() => setAspectRatio(ratio)}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200",
+                            aspectRatio === ratio 
+                              ? "bg-brand text-white shadow-lg shadow-brand/20" 
+                              : "bg-neutral-800 text-neutral-400 hover:text-white"
+                          )}
+                        >
+                          {ratio}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest block mb-3">Artistic Style</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(["None", "Realistic", "Cinematic", "Anime", "Oil Painting", "Digital Art"] as ImageStyle[]).map((style) => (
+                        <button
+                          key={style}
+                          onClick={() => setImageStyle(style)}
+                          className={cn(
+                            "px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200",
+                            imageStyle === style 
+                              ? "bg-brand/20 text-brand border border-brand/50" 
+                              : "bg-neutral-800 text-neutral-400 border border-transparent hover:border-neutral-700"
+                          )}
+                        >
+                          {style}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {selectedImage && (
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
@@ -393,6 +498,17 @@ export default function App() {
                 title="Add Photo"
               >
                 <Paperclip size={22} />
+              </button>
+
+              <button 
+                onClick={() => setShowSettings(!showSettings)}
+                className={cn(
+                  "p-3 rounded-full transition-all",
+                  showSettings ? "bg-brand/10 text-brand" : "text-neutral-400 hover:text-brand hover:bg-brand/10"
+                )}
+                title="Image Settings"
+              >
+                <ImageIcon size={22} />
               </button>
               
               <input 
