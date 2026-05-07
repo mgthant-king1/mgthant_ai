@@ -37,7 +37,13 @@ interface Message {
 
 // --- Initialization ---
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const API_KEY = process.env.GEMINI_API_KEY;
+
+if (!API_KEY || API_KEY === "MY_GEMINI_API_KEY") {
+  console.warn("GEMINI_API_KEY is missing or using placeholder. Please set it in your environment variables.");
+}
+
+const ai = new GoogleGenAI({ apiKey: API_KEY || "" });
 
 const BOT_NAME = "MG THANT AI";
 const SYSTEM_INSTRUCTION = `You are a helpful assistant named ${BOT_NAME}. 
@@ -268,12 +274,20 @@ export default function App() {
           timestamp: new Date()
         }]);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI Error:", error);
+      let errorMessage = "တောင်းပန်ပါတယ်။ AI နဲ့ ချိတ်ဆက်ရာမှာ အခက်အခဲရှိနေပါတယ်။ ခဏနေပြီးမှ ပြန်ကြိုးစားပေးပါ။";
+      
+      if (!API_KEY || API_KEY === "MY_GEMINI_API_KEY") {
+        errorMessage = "Error: GEMINI_API_KEY မရှိသေးပါ။ ကျေးဇူးပြု၍ Settings ထဲမှာ API Key ထည့်ပေးပါ။";
+      } else if (error?.message?.includes("Rpc failed") || error?.message?.includes("xhr")) {
+        errorMessage = "ကွန်ရက်အမှားအယွင်း ဖြစ်ပေါ်နေပါတယ်။ ကျေးဇူးပြု၍ Internet connection ကို စစ်ဆေးပေးပါ။";
+      }
+
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         role: "bot",
-        content: "တောင်းပန်ပါတယ်။ AI နဲ့ ချိတ်ဆက်ရာမှာ အခက်အခဲရှိနေပါတယ်။ ခဏနေပြီးမှ ပြန်ကြိုးစားပေးပါ။",
+        content: errorMessage,
         type: "text",
         timestamp: new Date()
       }]);

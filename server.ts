@@ -48,6 +48,8 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`App URL: ${process.env.APP_URL || 'Not Set'}`);
   });
 
   // Graceful stop
