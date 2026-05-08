@@ -20,9 +20,23 @@ async function startServer() {
       bot.start((ctx) => {
         ctx.reply("မင်္ဂလာပါ! ကျွန်တော်က MG THANT AI ပါ။\nဒီမှာလည်း ကျွန်တော့်ကို အသုံးပြုနိုင်သလို၊ ပိုမိုကောင်းမွန်တဲ့ အတွေ့အကြုံအတွက် Web App ကိုလည်း သွားရောက်အသုံးပြုနိုင်ပါတယ်။\n\nWeb App link: " + (process.env.APP_URL || "https://ai.studio/build"));
       });
-      bot.launch().catch(err => console.error("Telegram Bot Launch Error:", err));
+      
+      // Delay launch slightly and clear webhook to allow previous instances to clear
+      setTimeout(async () => {
+        try {
+          await bot?.telegram.deleteWebhook();
+          await bot?.launch();
+          console.log("Telegram Bot started successfully");
+        } catch (err: any) {
+          if (err.response?.error_code === 409) {
+            console.warn("Telegram Bot Conflict (409): Another instance is running. This instance will skip launch.");
+          } else {
+            console.error("Telegram Bot Launch Error:", err);
+          }
+        }
+      }, 2000);
     } catch (e) {
-      console.error("Failed to start Telegram bot:", e);
+      console.error("Failed to initialize Telegram bot:", e);
     }
   }
 
