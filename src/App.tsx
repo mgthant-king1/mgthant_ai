@@ -34,7 +34,7 @@ import { cn } from "./lib/utils";
 
 // --- Constants & Types ---
 
-const MODEL_CHAT = "gemini-3-flash-preview";
+const MODEL_CHAT = "gemini-1.5-flash";
 const MODEL_IMAGE = "gemini-2.5-flash-image";
 
 interface Message {
@@ -169,6 +169,26 @@ const applyWatermark = (base64: string): Promise<string> => {
   });
 };
 
+const AILogo = ({ size = 18, className = "" }: { size?: number, className?: string }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="-10 -10 20 20" 
+    className={className}
+    style={{ filter: "drop-shadow(0 0 2px rgba(59, 130, 246, 0.5))" }}
+  >
+    {/* Main Diamond Shape */}
+    <path 
+      d="M 0,-10 L 10,0 L 0,10 L -10,0 Z" 
+      fill="#3b82f6" 
+    />
+    {/* Inner Detail (Core) */}
+    <circle cx="0" cy="0" r="4" fill="white" />
+    {/* Small sparks/dots */}
+    <circle cx="6.6" cy="-6.6" r="2" fill="rgba(255,255,255,0.7)" />
+  </svg>
+);
+
 // --- Components ---
 
 const MessageBubble = ({ message }: { message: Message, key?: string }) => {
@@ -188,10 +208,10 @@ const MessageBubble = ({ message }: { message: Message, key?: string }) => {
         isBot ? "flex-row" : "flex-row-reverse"
       )}>
         <div className={cn(
-          "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-110",
-          isBot ? "bg-brand/10 text-brand" : "bg-neutral-800 text-neutral-400"
+          "w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-110",
+          isBot ? "bg-brand/15 border border-brand/20 shadow-[0_0_15px_rgba(59,130,246,0.2)]" : "bg-neutral-800 text-neutral-400"
         )}>
-          {isBot ? <Sparkles size={18} /> : <User size={18} />}
+          {isBot ? <AILogo size={20} /> : <User size={18} />}
         </div>
         
         <div className="flex-1 space-y-2">
@@ -566,25 +586,38 @@ export default function App() {
           }
           currentParts.push({ text: userText || (hasImages ? "ဤပုံရိပ်များကို ရှင်းပြပေးပါ။" : "Hello") });
 
-          const result = await ai.models.generateContent({
-            model: MODEL_CHAT,
+          const botMsgId = Date.now().toString();
+          setMessages(prev => [...prev, {
+            id: botMsgId,
+            role: "bot",
+            content: "",
+            type: "text",
+            timestamp: new Date()
+          }]);
+
+          const result = await ai.models.generateContentStream({
+            model: MODEL_CHAT, 
             contents: [
               ...history,
               { role: 'user', parts: currentParts }
             ],
             config: {
               systemInstruction: SYSTEM_INSTRUCTION,
-              temperature: 0.7
+              temperature: 0.7,
+              maxOutputTokens: 2048
             }
           });
 
-          setMessages(prev => [...prev, {
-            id: Date.now().toString(),
-            role: "bot",
-            content: result.text || "တောင်းပန်ပါတယ်။ တစ်ခုခုအမှားအယွင်းရှိနေပါတယ်။",
-            type: "text",
-            timestamp: new Date()
-          }]);
+          let fullText = "";
+          for await (const chunk of result) {
+            const chunkText = chunk.text || "";
+            fullText += chunkText;
+            setMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, content: fullText } : m));
+          }
+
+          if (!fullText) {
+            setMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, content: "တောင်းပန်ပါတယ်။ တစ်ခုခုအမှားအယွင်းရှိနေပါတယ်။" } : m));
+          }
         }
       } catch (error: any) {
         attempts++;
@@ -754,7 +787,7 @@ export default function App() {
                >
                  <div className="w-20 h-20 bg-brand/10 rounded-3xl flex items-center justify-center mb-6 relative">
                     <div className="absolute inset-0 bg-brand/20 blur-xl animate-pulse" />
-                    <Sparkles size={40} className="text-brand relative" />
+                    <AILogo size={40} className="relative" />
                  </div>
                  <h2 className="text-4xl md:text-5xl font-semibold mb-4 tracking-tight gemini-gradient-text">
                    Hello, How can I help?
