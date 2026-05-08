@@ -48,7 +48,14 @@ async function startServer() {
 
     try {
       const newBot = new Telegraf(token);
-      const ai = new GoogleGenAI({ apiKey: geminiKey || process.env.GEMINI_API_KEY || "" });
+      const apiKey = geminiKey || process.env.GEMINI_API_KEY;
+      
+      if (!apiKey) {
+        console.error("No API Key available for Telegram Bot");
+        return null;
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
 
       newBot.start((ctx) => {
         ctx.reply("မင်္ဂလာပါ! ကျွန်တော်က MG THANT AI Telegram Bot ပါ။ ဘာတွေကို ကူညီပေးရမလဲခင်ဗျာ။");
@@ -67,9 +74,13 @@ async function startServer() {
           
           const replyText = response.text || "တောင်းပန်ပါတယ်။ စာပြန်ဖို့ အခက်အခဲရှိနေပါတယ်။";
           await ctx.reply(replyText);
-        } catch (err) {
+        } catch (err: any) {
           console.error("Gemini Telegram Error:", err);
-          await ctx.reply("တောင်းပန်ပါတယ်။ အခုလောလောဆယ် စာပြန်ဖို့ အခက်အခဲရှိနေပါတယ်။");
+          if (err.message?.includes("API_KEY_INVALID") || err.message?.includes("key not valid")) {
+             await ctx.reply("တောင်းပန်ပါတယ်။ API Key မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ Web App ရှိ Settings တွင် API Key ကို ပြန်လည်စစ်ဆေးပေးပါ။");
+          } else {
+             await ctx.reply("တောင်းပန်ပါတယ်။ အခုလောလောဆယ် စာပြန်ဖို့ အခက်အခဲရှိနေပါတယ်။");
+          }
         }
       });
 
