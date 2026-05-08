@@ -43,7 +43,8 @@ interface Message {
   content: string;
   type: "text" | "image";
   timestamp: Date;
-  imageData?: string; // base64
+  imageData?: string; // Main image (first)
+  imageDatas?: string[]; // Multiple images support
 }
 
 type AspectRatio = "1:1" | "4:3" | "16:9";
@@ -173,16 +174,6 @@ const applyWatermark = (base64: string): Promise<string> => {
 const MessageBubble = ({ message }: { message: Message, key?: string }) => {
   const isBot = message.role === "bot";
   
-  const handleDownload = () => {
-    if (!message.imageData) return;
-    const link = document.createElement("a");
-    link.href = message.imageData;
-    link.download = `mgthant_ai_${Date.now()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -210,22 +201,32 @@ const MessageBubble = ({ message }: { message: Message, key?: string }) => {
               ? "text-neutral-200" 
               : "bg-[#1e1f20] px-5 py-3 rounded-2xl border border-neutral-800 text-white shadow-sm"
           )}>
-            {message.type === "image" && message.imageData ? (
+            {message.type === "image" && (message.imageData || message.imageDatas) ? (
               <div className="space-y-3 relative mt-2">
-                <div className="relative group/img overflow-hidden rounded-2xl border border-neutral-800 shadow-2xl max-w-sm">
-                  <img 
-                    src={message.imageData} 
-                    alt="Generated" 
-                    className="max-w-full rounded-2xl"
-                    referrerPolicy="no-referrer"
-                  />
-                  
-                  <button 
-                    onClick={handleDownload}
-                    className="absolute top-3 right-3 p-2.5 bg-black/60 hover:bg-black/80 text-white rounded-full opacity-0 group-hover/img:opacity-100 transition-opacity backdrop-blur-md shadow-xl"
-                  >
-                    <Download size={16} />
-                  </button>
+                <div className="flex flex-wrap gap-3">
+                  {(message.imageDatas || (message.imageData ? [message.imageData] : [])).map((img, idx) => (
+                    <div key={idx} className="relative group/img overflow-hidden rounded-2xl border border-neutral-800 shadow-2xl max-w-sm transition-all hover:scale-[1.02]">
+                      <img 
+                        src={img} 
+                        alt="AI Generated/Uploaded" 
+                        className="max-w-full rounded-2xl"
+                        referrerPolicy="no-referrer"
+                      />
+                      
+                      <button 
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = img;
+                          link.download = `mgthant-ai-${Date.now()}-${idx}.png`;
+                          link.click();
+                        }}
+                        className="absolute top-3 right-3 p-2.5 bg-black/60 hover:bg-black/80 text-white rounded-full opacity-0 group-hover/img:opacity-100 transition-opacity backdrop-blur-md shadow-xl"
+                        title="Download Image"
+                      >
+                        <Download size={16} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
                 {message.content && <p className="text-sm font-medium text-neutral-400">{message.content}</p>}
               </div>
@@ -267,16 +268,50 @@ export default function App() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [imageStyle, setImageStyle] = useState<ImageStyle>("None");
   const [customApiKey, setCustomApiKey] = useState("");
+  const [telegramToken, setTelegramToken] = useState("");
+  const [isBotSyncing, setIsBotSyncing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleUpdateBotConfig = async () => {
+    setIsBotSyncing(true);
+    try {
+      const res = await fetch("/api/bot/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: telegramToken, geminiKey: customApiKey })
+      });
+      if (res.ok) {
+        alert("Telegram Bot configuration updated successfully!");
+      } else {
+        alert("Failed to update Telegram Bot configuration.");
+      }
+    } catch (e) {
+      console.error("Sync error:", e);
+      alert("Error connecting to server.");
+    } finally {
+      setIsBotSyncing(false);
+    }
+  };
+
   // Load from localStorage on mount
   useEffect(() => {
     const savedKey = localStorage.getItem("mgthant_api_key");
     if (savedKey) setCustomApiKey(savedKey);
+
+    const fetchBotConfig = async () => {
+      try {
+        const res = await fetch("/api/bot/config");
+        const data = await res.json();
+        if (data.telegramToken) setTelegramToken(data.telegramToken);
+      } catch (e) {
+        console.error("Failed to fetch bot config", e);
+      }
+    };
+    fetchBotConfig();
 
     // Global error handler to catch "Uncaught" errors
     const handleError = (event: ErrorEvent) => {
@@ -331,9 +366,9 @@ export default function App() {
     if (messages.length > 0) {
       try {
         // Keep only last 30 messages
-        // STRIP imageData to avoid QuotaExceededError as base64 images are very large
+        // STRIP imageData and imageDatas to avoid QuotaExceededError as base64 images are very large
         const toSave = messages.slice(-30).map(m => {
-          const { imageData, ...rest } = m;
+          const { imageData, imageDatas, ...rest } = m;
           return {
             ...rest,
             timestamp: m.timestamp.toISOString()
@@ -364,10 +399,11 @@ export default function App() {
     const newUserMessage: Message = {
       id: Date.now().toString(),
       role: "user",
-      content: userText || (hasImages ? `[User sent ${currentImages.length} images]` : ""),
+      content: userText || (hasImages ? `[User sent ${currentImages.length} image${currentImages.length > 1 ? "s" : ""}]` : ""),
       type: hasImages ? "image" : "text",
       timestamp: new Date(),
-      imageData: hasImages ? currentImages[0] : undefined // For legacy UI display in bubbles if needed, though bubble logic should ideally show all
+      imageData: hasImages ? currentImages[0] : undefined,
+      imageDatas: hasImages ? currentImages : undefined
     };
 
     setMessages(prev => [...prev, newUserMessage]);
@@ -376,7 +412,11 @@ export default function App() {
     const isImageGenRequest = !hasImages && (
       /draw|generate|create|photo|image|picture|painting|art|illustration|sketch|ပုံဆွဲ|ပုံဖန်တီး|ဓါတ်ပုံ|ပုံလေး|ဆွဲပေး|ဖန်တီးပေး/i.test(userText)
     );
-    const isEditRequest = hasImages && /edit|ပြင်|ပြောင်း|modify|change|retouch|ပြုပြင်/i.test(userText);
+    // Enhanced edit detection: inclusive of more keywords
+    const isEditRequest = hasImages && (
+      /edit|modify|change|add|remove|put|enhance|fix|retouch|adjust|transform|combine|merge|ပြင်|ပြောင်း|ထည့်|ဖယ်|လှအောင်လုပ်|အရောင်ချယ်|ပြုပြင်/i.test(userText) ||
+      (userText.length > 0 && !/what|who|describe|explain|tell|where|ဘယ်|ဘာ|ဘယ်သူ|ရှင်းပြ/i.test(userText))
+    );
     const isVisionRequest = hasImages && !isEditRequest;
 
     if (isEditRequest) {
@@ -393,7 +433,6 @@ export default function App() {
     setSelectedImages([]);
     setIsLoading(true);
     let attempts = 0;
-    const maxAttempts = 2;
 
     const executeRequest = async (): Promise<void> => {
       const ai = getAI(customApiKey);
@@ -418,11 +457,11 @@ export default function App() {
               parts: [
                 { inlineData: { data: base64Data, mimeType: mimeType } },
                 ...contextParts,
-                { text: `TASK: EDIT IMAGE. User Instruction: "${userText || "Enhance visual quality"}". Style: ${imageStyle}. Context: User provided ${currentImages.length} images. Use them for reference if needed.` }
+                { text: `Task: Edit/Modify the provided image(s). User Instruction: "${userText || "Improve visual quality"}". Apply style: ${imageStyle}. Output ONE modified image.` }
               ]
             },
             config: {
-              systemInstruction: SYSTEM_INSTRUCTION,
+              systemInstruction: `You are a master image editor. Follow the user's editing instructions precisely and output the resulting image in ${imageStyle} style.`,
               imageConfig: {
                 aspectRatio: aspectRatio === "1:1" ? "1:1" : aspectRatio === "4:3" ? "4:3" : "16:9"
               }
@@ -552,9 +591,9 @@ export default function App() {
         const errorString = JSON.stringify(error);
         const isRetryable = errorString.includes("429") || errorString.includes("500") || errorString.includes("xhr") || errorString.includes("quota");
 
-        if (isRetryable && attempts < 3) { // Increased to 3 attempts
-          const backoff = Math.pow(2, attempts) * 1000; // Exponential backoff: 2s, 4s
-          setLoadingStatus(`ခဏစောင့်ဆိုင်းပေးပါ... (${attempts}/3)`);
+        if (isRetryable && attempts < 4) { // Up to 4 attempts
+          const backoff = Math.pow(2, attempts) * 2000; // Exponential backoff: 2s, 4s, 8s, 16s
+          setLoadingStatus(`ခဏစောင့်ဆိုင်းပေးပါ... (${attempts}/4)`);
           await sleep(backoff);
           return executeRequest();
         }
@@ -564,10 +603,10 @@ export default function App() {
         
         if (!DEFAULT_API_KEY && !customApiKey) {
           errorMessage = "Error: API Key မရှိသေးပါ။ ကျေးဇူးပြု၍ Settings ထဲမှာ လူကြီးမင်း၏ API Key ကို ထည့်သွင်းပေးပါ။";
+        } else if (errorString.includes("429") || errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("quota")) {
+          errorMessage = "Request များပြားနေသဖြင့် Quota ပြည့်သွားပါသည်။ ပိုမိုမြန်ဆန်စွာ အသုံးပြုနိုင်ရန် Settings ထဲတွင် လူကြီးမင်း၏ ကိုယ်ပိုင် API Key ကို ထည့်သွင်းအသုံးပြုပေးပါရန် အကြံပြုအပ်ပါသည်။ (Go to settings to add your own key)";
         } else if (errorString.includes("Rpc failed") || errorString.includes("500") || errorString.includes("xhr")) {
           errorMessage = "စနစ်အတွင်း အနည်းငယ် ဝန်ပိနေပါသဖြင့် ခဏနေမှ ထပ်မံကြိုးစားပေးပါ။ (Server busy or Large payload)";
-        } else if (errorString.includes("429") || errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("quota")) {
-          errorMessage = "ခွင့်ပြုထားသော အသုံးပြုမှု ပမာဏ (Quota) ကျော်လွန်သွားပါပြီ။ အခမဲ့အသုံးပြုခွင့် ကန့်သတ်ချက်ကြောင့် ဖြစ်နိုင်ပါသည်။ ခဏနားပြီးမှ ပြန်လည်အသုံးပြုပေးပါရန် သို့မဟုတ် settings ထဲတွင် လူကြီးမင်း၏ ကိုယ်ပိုင် API Key ကို အသုံးပြုပေးပါ။";
         }
 
         setMessages(prev => [...prev, {
@@ -819,6 +858,36 @@ export default function App() {
                         လူကြီးမင်း၏ ကိုယ်ပိုင် API Key ကို အသုံးပြုခြင်းဖြင့် ပိုမိုမြန်ဆန်ပြီး ကန့်သတ်ချက်မဲ့ အသုံးပြုနိုင်ပါသည်။ (Saved locally)
                       </p>
                     </div>
+
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <Bot size={14} className="text-brand" />
+                        <label className="text-[11px] font-bold text-neutral-500 uppercase tracking-[0.2em] block">Telegram Bot Token</label>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <input 
+                            type="password"
+                            value={telegramToken}
+                            onChange={(e) => setTelegramToken(e.target.value)}
+                            placeholder="Telegram Bot Token..."
+                            className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-xl px-4 py-2.5 text-sm focus:border-brand/50 focus:ring-1 focus:ring-brand/20 outline-none transition-all pr-10"
+                          />
+                        </div>
+                        <button 
+                          onClick={handleUpdateBotConfig}
+                          disabled={isBotSyncing}
+                          className="bg-brand text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-brand/90 transition-all disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
+                        >
+                          {isBotSyncing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                          Sync Bot
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[10px] text-neutral-500 leading-relaxed">
+                        BotFather မှရရှိသော Token ကိုထည့်ပါ။ Telegram မှာပါ AI ကို အသုံးပြုနိုင်မည်ဖြစ်ပါသည်။
+                      </p>
+                    </div>
+
                     <div>
                       <div className="flex items-center gap-2 mb-4">
                         <Sparkles size={14} className="text-brand" />

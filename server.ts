@@ -2,47 +2,112 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { Telegraf } from "telegraf";
+import { GoogleGenAI } from "@google/genai";
+import fs from "fs";
+
+interface BotConfig {
+  telegramToken: string;
+  geminiKey: string;
+}
+
+const CONFIG_PATH = path.join(process.cwd(), "bot-config.json");
+
+function loadConfig(): BotConfig {
+  if (fs.existsSync(CONFIG_PATH)) {
+    try {
+      return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    } catch (e) {
+      console.error("Failed to read bot-config.json", e);
+    }
+  }
+  return { telegramToken: "", geminiKey: "" };
+}
+
+function saveConfig(config: BotConfig) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
 
 async function startServer() {
   const app = express();
+  app.use(express.json());
   const PORT = 3000;
 
-  // Telegram Bot Token from user request
-  const BOT_TOKEN = "8774798466:AAGogZmMFPPuiHH3swTDXstevpVQmM7C4hU";
-  
-  // NOTE: We initialize the bot but don't add full logic here yet
-  // as Gemini calls should be frontend-side according to guidelines.
-  // However, we can run a simple bot that redirects to the Web App or handles basic commands.
+  let config = loadConfig();
   let bot: Telegraf | null = null;
-  if (BOT_TOKEN && !BOT_TOKEN.includes("MY_BOT_TOKEN")) {
-    try {
-      bot = new Telegraf(BOT_TOKEN);
-      bot.start((ctx) => {
-        ctx.reply("မင်္ဂလာပါ! ကျွန်တော်က MG THANT AI ပါ။\nဒီမှာလည်း ကျွန်တော့်ကို အသုံးပြုနိုင်သလို၊ ပိုမိုကောင်းမွန်တဲ့ အတွေ့အကြုံအတွက် Web App ကိုလည်း သွားရောက်အသုံးပြုနိုင်ပါတယ်။\n\nWeb App link: " + (process.env.APP_URL || "https://ai.studio/build"));
-      });
-      
-      // Delay launch slightly and clear webhook to allow previous instances to clear
-      setTimeout(async () => {
-        try {
-          await bot?.telegram.deleteWebhook();
-          await bot?.launch();
-          console.log("Telegram Bot started successfully");
-        } catch (err: any) {
-          if (err.response?.error_code === 409) {
-            console.warn("Telegram Bot Conflict (409): Another instance is running. This instance will skip launch.");
-          } else {
-            console.error("Telegram Bot Launch Error:", err);
-          }
-        }
-      }, 2000);
-    } catch (e) {
-      console.error("Failed to initialize Telegram bot:", e);
+
+  const initBot = async (token: string, geminiKey: string) => {
+    if (bot) {
+      try {
+        await bot.stop("RESTARTING");
+      } catch (err) {
+        console.warn("Attempted to stop bot but it was not running:", err);
+      }
     }
+
+    if (!token) return null;
+
+    try {
+      const newBot = new Telegraf(token);
+      const ai = new GoogleGenAI({ apiKey: geminiKey || process.env.GEMINI_API_KEY || "" });
+
+      newBot.start((ctx) => {
+        ctx.reply("မင်္ဂလာပါ! ကျွန်တော်က MG THANT AI Telegram Bot ပါ။ ဘာတွေကို ကူညီပေးရမလဲခင်ဗျာ။");
+      });
+
+      newBot.on("text", async (ctx) => {
+        const text = ctx.message.text;
+        try {
+          const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: text,
+            config: {
+              systemInstruction: "You are MG THANT AI, a Telegram bot. Respond professionally and concisely in Burmese."
+            }
+          });
+          
+          const replyText = response.text || "တောင်းပန်ပါတယ်။ စာပြန်ဖို့ အခက်အခဲရှိနေပါတယ်။";
+          await ctx.reply(replyText);
+        } catch (err) {
+          console.error("Gemini Telegram Error:", err);
+          await ctx.reply("တောင်းပန်ပါတယ်။ အခုလောလောဆယ် စာပြန်ဖို့ အခက်အခဲရှိနေပါတယ်။");
+        }
+      });
+
+      newBot.launch().then(() => {
+        console.log("Telegram Bot started with dynamic token");
+      }).catch(err => {
+        console.error("Telegraf launch error:", err);
+      });
+
+      return newBot;
+    } catch (e) {
+      console.error("Bot initialization failed:", e);
+      return null;
+    }
+  };
+
+  // Initial boot
+  if (config.telegramToken) {
+    initBot(config.telegramToken, config.geminiKey).then(newBot => {
+      bot = newBot;
+    });
   }
 
   // API regions
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.post("/api/bot/config", async (req, res) => {
+    const { token, geminiKey } = req.body;
+    config = { telegramToken: token, geminiKey };
+    saveConfig(config);
+    bot = await initBot(token, geminiKey);
+    res.json({ status: "success", message: "Bot configuration updated and restarted" });
+  });
+
+  app.get("/api/bot/config", (req, res) => {
+    res.json(config);
   });
 
   // Vite middleware for development
@@ -62,13 +127,15 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`App URL: ${process.env.APP_URL || 'Not Set'}`);
   });
 
   // Graceful stop
-  process.once('SIGINT', () => bot?.stop('SIGINT'));
-  process.once('SIGTERM', () => bot?.stop('SIGTERM'));
+  process.once('SIGINT', () => {
+    try { bot?.stop('SIGINT'); } catch (e) {}
+  });
+  process.once('SIGTERM', () => {
+    try { bot?.stop('SIGTERM'); } catch (e) {}
+  });
 }
 
 startServer();
